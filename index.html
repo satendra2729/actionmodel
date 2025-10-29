@@ -1,0 +1,709 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+   <title>3D Character Controller</title>
+   <script src="https://cdn.tailwindcss.com"></script>
+   <style>
+       body {
+           font-family: 'Inter', sans-serif;
+           margin: 0;
+           padding: 0;
+           background-color: #000;
+           color: white;
+           overflow: hidden; /* Prevent scrolling */
+       }
+       #container {
+           position: fixed;
+           top: 0;
+           left: 0;
+           width: 100%;
+           height: 100%;
+       }
+       #loader {
+           position: fixed;
+           top: 0;
+           left: 0;
+           width: 100%;
+           height: 100%;
+           background: rgba(0, 0, 0, 0.8);
+           display: flex;
+           justify-content: center;
+           align-items: center;
+           z-index: 100;
+       }
+       #input-modal {
+           position: fixed;
+           top: 0;
+           left: 0;
+           width: 100%;
+           height: 100%;
+           background: rgba(0, 0, 0, 0.9);
+           display: flex;
+           justify-content: center;
+           align-items: center;
+           z-index: 90;
+           backdrop-filter: blur(10px);
+       }
+       /* Touch Controls */
+       #touch-controls {
+           position: fixed;
+           bottom: 0;
+           left: 0;
+           width: 100%;
+           height: 100%;
+           z-index: 50;
+           pointer-events: none; /* Pass clicks through unless on a button */
+           display: none; /* Hidden by default */
+       }
+       /* Joystick */
+       #joystick-area {
+           position: absolute;
+           bottom: 5vw;
+           left: 5vw;
+           width: 30vw;
+           height: 30vw;
+           max-width: 150px;
+           max-height: 150px;
+           background: rgba(255, 255, 255, 0.1);
+           border-radius: 50%;
+           pointer-events: auto; /* Enable touch on this area */
+       }
+       #joystick-thumb {
+           position: absolute;
+           top: 50%;
+           left: 50%;
+           width: 12vw;
+           height: 12vw;
+           max-width: 60px;
+           max-height: 60px;
+           background: rgba(255, 255, 255, 0.5);
+           border-radius: 50%;
+           transform: translate(-50%, -50%);
+           transition: transform 0.1s ease-out;
+       }
+       /* Action Buttons */
+       #action-buttons {
+           position: absolute;
+           bottom: 5vw;
+           right: 5vw;
+           display: grid;
+           grid-template-columns: 1fr 1fr;
+           gap: 2vw;
+           pointer-events: auto; /* Enable touch on this area */
+       }
+       .action-btn {
+           width: 15vw;
+           height: 15vw;
+           max-width: 70px;
+           max-height: 70px;
+           background: rgba(255, 255, 255, 0.2);
+           border: 2px solid rgba(255, 255, 255, 0.3);
+           border-radius: 50%;
+           display: flex;
+           justify-content: center;
+           align-items: center;
+           font-size: 3vw;
+           font-weight: bold;
+           color: white;
+           user-select: none;
+           text-align: center;
+           line-height: 1.2;
+       }
+       @media (min-width: 640px) {
+           .action-btn { font-size: 16px; }
+       }
+       #jump-btn { grid-column: 2 / 3; grid-row: 1 / 2; }
+       #punch-btn { grid-column: 1 / 2; grid-row: 1 / 2; }
+       #crouch-btn { grid-column: 2 / 3; grid-row: 2 / 3; }
+       #kick-btn { grid-column: 1 / 2; grid-row: 2 / 3; }
+      
+       #info {
+           position: absolute;
+           top: 10px;
+           width: 100%;
+           text-align: center;
+           z-index: 20;
+           color: white;
+           background: rgba(0,0,0,0.3);
+           padding: 5px;
+           font-size: 0.8rem;
+       }
+   </style>
+</head>
+<body>
+   <!-- 3D Scene Container -->
+   <div id="container"></div>
+
+
+   <!-- Info Box -->
+   <div id="info">
+       <b>Note:</b> Model animations are limited. Kicks/Flips are mapped to Punch/Jump.
+   </div>
+
+
+   <!-- Loading Screen -->
+   <div id="loader">
+       <div class="text-2xl font-bold animate-pulse">Loading Model...</div>
+   </div>
+
+
+   <!-- Input Selection Modal -->
+   <div id="input-modal">
+       <div class="bg-white/10 p-10 rounded-lg shadow-xl text-center">
+           <h2 class="text-3xl font-bold mb-6">Select Input Mode</h2>
+           <p class="mb-8">Is this a touch screen device?</p>
+           <div class="flex justify-center gap-6">
+               <button id="touch-btn" class="px-8 py-4 bg-blue-600 rounded-lg text-xl font-semibold hover:bg-blue-500 transition-colors">
+                   Yes (Touch)
+               </button>
+               <button id="keyboard-btn" class="px-8 py-4 bg-gray-600 rounded-lg text-xl font-semibold hover:bg-gray-500 transition-colors">
+                   No (Keyboard)
+               </button>
+           </div>
+       </div>
+   </div>
+
+
+   <!-- On-Screen Touch Controls (Initially hidden) -->
+   <div id="touch-controls">
+       <!-- Joystick -->
+       <div id="joystick-area">
+           <div id="joystick-thumb"></div>
+       </div>
+       <!-- Action Buttons -->
+       <div id="action-buttons">
+           <div id="punch-btn" class="action-btn">PUNCH</div>
+           <div id="jump-btn" class="action-btn">JUMP</div>
+           <div id="kick-btn" class="action-btn">KICK</div>
+           <div id="crouch-btn" class="action-btn">CROUCH</div>
+       </div>
+   </div>
+
+
+   <!-- Three.js and GLTFLoader -->
+   <script type="importmap">
+       {
+           "imports": {
+               "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+               "GLTFLoader": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"
+           }
+       }
+   </script>
+
+
+   <!-- Main Application Logic -->
+   <script type="module">
+       import * as THREE from 'three';
+       import { GLTFLoader } from 'GLTFLoader';
+
+
+       // --- Global Variables ---
+       let scene, camera, renderer, clock, mixer, model;
+       let animationsMap = new Map(); // Stores all animation clips
+       let activeAction; // The current looping animation (e.g., Idle, Walk)
+      
+       let inputMode = 'keyboard'; // 'keyboard' or 'touch'
+      
+       // Input state
+       const keysPressed = {};
+       const touchState = {
+           joystick: { x: 0, y: 0, active: false },
+           camera: { x: 0, y: 0, active: false, touchId: null, lastX: 0 },
+           buttons: { punch: false, kick: false, jump: false, crouch: false }
+       };
+
+
+       // Movement state
+       let moveDirection = new THREE.Vector3();
+       let targetRotationY = 0;
+       let currentRotationY = 0;
+       const cameraOffset = new THREE.Vector3(0, 2.5, -5); // Third-person camera offset
+       let isCrouching = false;
+
+
+       // DOM Elements
+       const container = document.getElementById('container');
+       const loader = document.getElementById('loader');
+       const modal = document.getElementById('input-modal');
+       const touchControls = document.getElementById('touch-controls');
+
+
+       // --- Initialization ---
+       function init() {
+           // Scene
+           scene = new THREE.Scene();
+           scene.background = new THREE.Color(0x333333);
+           scene.fog = new THREE.Fog(0x333333, 10, 30);
+
+
+           // Clock
+           clock = new THREE.Clock();
+
+
+           // Camera
+           camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+           camera.position.set(0, 2.5, -5);
+
+
+           // Renderer
+           renderer = new THREE.WebGLRenderer({ antialias: true });
+           renderer.setSize(window.innerWidth, window.innerHeight);
+           renderer.shadowMap.enabled = true;
+           container.appendChild(renderer.domElement);
+
+
+           // Lights
+           const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+           hemiLight.position.set(0, 20, 0);
+           scene.add(hemiLight);
+
+
+           const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+           dirLight.position.set(10, 10, 5);
+           dirLight.castShadow = true;
+           dirLight.shadow.camera.top = 4;
+           dirLight.shadow.camera.bottom = -4;
+           dirLight.shadow.camera.left = -4;
+           dirLight.shadow.camera.right = 4;
+           dirLight.shadow.camera.near = 0.1;
+           dirLight.shadow.camera.far = 40;
+           scene.add(dirLight);
+
+
+           // Ground
+           const groundMesh = new THREE.Mesh(
+               new THREE.PlaneGeometry(100, 100),
+               new THREE.MeshPhongMaterial({ color: 0x444444, depthWrite: false })
+           );
+           groundMesh.rotation.x = -Math.PI / 2;
+           groundMesh.receiveShadow = true;
+           scene.add(groundMesh);
+
+
+           // Load Model
+           const loader = new GLTFLoader();
+           loader.load(
+               'https://threejs.org/examples/models/gltf/RobotExpressive/RobotExpressive.glb',
+               onModelLoad,
+               undefined,
+               (error) => console.error(error)
+           );
+
+
+           // Resize Listener
+           window.addEventListener('resize', onWindowResize);
+       }
+
+
+       function onModelLoad(gltf) {
+           model = gltf.scene;
+           model.scale.set(0.5, 0.5, 0.5);
+           scene.add(model);
+
+
+           // Enable shadows for all meshes in the model
+           model.traverse(node => {
+               if (node.isMesh) {
+                   node.castShadow = true;
+               }
+           });
+
+
+           // Animation Mixer
+           mixer = new THREE.AnimationMixer(model);
+
+
+           // Store animations
+           gltf.animations.forEach(clip => {
+               const action = mixer.clipAction(clip);
+               animationsMap.set(clip.name, action);
+           });
+
+
+           // Set initial action
+           activeAction = animationsMap.get('Idle');
+           activeAction.play();
+
+
+           // Hide loader and show input modal
+           loader.style.display = 'none';
+           modal.style.display = 'flex';
+
+
+           // Setup modal buttons
+           document.getElementById('touch-btn').onclick = () => setupInputMode('touch');
+           document.getElementById('keyboard-btn').onclick = () => setupInputMode('keyboard');
+       }
+
+
+       function setupInputMode(mode) {
+           inputMode = mode;
+           modal.style.display = 'none';
+
+
+           if (mode === 'keyboard') {
+               initKeyboardControls();
+           } else {
+               initTouchControls();
+           }
+          
+           // Start the animation loop
+           animate();
+       }
+
+
+       // --- Input Handlers ---
+
+
+       function initKeyboardControls() {
+           document.addEventListener('keydown', (e) => {
+               keysPressed[e.key.toLowerCase()] = true;
+               handleKeyAction(e.key.toLowerCase(), true);
+           });
+           document.addEventListener('keyup', (e) => {
+               keysPressed[e.key.toLowerCase()] = false;
+               handleKeyAction(e.key.toLowerCase(), false);
+           });
+           document.addEventListener('mousemove', (e) => {
+               // Rotate character based on mouse X position
+               // Maps mouse X from 0-width to a rotation of -PI to PI
+               targetRotationY = (e.clientX / window.innerWidth) * Math.PI * 2 - Math.PI;
+           });
+       }
+
+
+       function initTouchControls() {
+           touchControls.style.display = 'block';
+
+
+           const joystickArea = document.getElementById('joystick-area');
+           const joystickThumb = document.getElementById('joystick-thumb');
+           const joystickRect = joystickArea.getBoundingClientRect();
+           const joystickCenter = { x: joystickRect.left + joystickRect.width / 2, y: joystickRect.top + joystickRect.height / 2 };
+           const joystickRadius = joystickRect.width / 2;
+
+
+           joystickArea.addEventListener('touchstart', handleJoystick, false);
+           joystickArea.addEventListener('touchmove', handleJoystick, false);
+           joystickArea.addEventListener('touchend', handleJoystickEnd, false);
+           joystickArea.addEventListener('touchcancel', handleJoystickEnd, false);
+
+
+           function handleJoystick(e) {
+               e.preventDefault();
+               touchState.joystick.active = true;
+               const touch = e.touches[0];
+              
+               let x = touch.clientX - joystickCenter.x;
+               let y = touch.clientY - joystickCenter.y;
+              
+               const distance = Math.sqrt(x*x + y*y);
+               const angle = Math.atan2(y, x);
+
+
+               if (distance > joystickRadius) {
+                   x = Math.cos(angle) * joystickRadius;
+                   y = Math.sin(angle) * joystickRadius;
+               }
+
+
+               joystickThumb.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+
+
+               // Normalize x and y from -1 to 1
+               touchState.joystick.x = x / joystickRadius;
+               touchState.joystick.y = y / joystickRadius;
+           }
+
+
+           function handleJoystickEnd(e) {
+               e.preventDefault();
+               touchState.joystick.active = false;
+               touchState.joystick.x = 0;
+               touchState.joystick.y = 0;
+               joystickThumb.style.transform = 'translate(-50%, -50%)';
+           }
+
+
+           // Action Buttons
+           document.getElementById('jump-btn').addEventListener('touchstart', (e) => { e.preventDefault(); playOneShotAction('Jump'); });
+           document.getElementById('punch-btn').addEventListener('touchstart', (e) => { e.preventDefault(); playOneShotAction('Punch'); });
+           document.getElementById('kick-btn').addEventListener('touchstart', (e) => { e.preventDefault(); playOneShotAction('Punch'); }); // Mapped to Punch
+          
+           const crouchBtn = document.getElementById('crouch-btn');
+           crouchBtn.addEventListener('touchstart', (e) => {
+               e.preventDefault();
+               isCrouching = !isCrouching;
+               crouchBtn.style.background = isCrouching ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)';
+           });
+
+
+           // Camera Touch Control (on the canvas itself)
+           renderer.domElement.addEventListener('touchstart', (e) => {
+               // Ignore if touch starts on a control
+               if (e.target.closest('#touch-controls')) return;
+              
+               if (!touchState.camera.active) {
+                   touchState.camera.active = true;
+                   touchState.camera.touchId = e.changedTouches[0].identifier;
+                   touchState.camera.lastX = e.changedTouches[0].clientX;
+               }
+           }, false);
+
+
+           renderer.domElement.addEventListener('touchmove', (e) => {
+               if (!touchState.camera.active) return;
+              
+               let cameraTouch = null;
+               for (let touch of e.changedTouches) {
+                   if (touch.identifier === touchState.camera.touchId) {
+                       cameraTouch = touch;
+                       break;
+                   }
+               }
+               if (!cameraTouch) return;
+
+
+               const deltaX = cameraTouch.clientX - touchState.camera.lastX;
+               targetRotationY -= deltaX * 0.02; // Adjust sensitivity
+               touchState.camera.lastX = cameraTouch.clientX;
+
+
+           }, false);
+          
+           const cameraEnd = (e) => {
+               for (let touch of e.changedTouches) {
+                   if (touch.identifier === touchState.camera.touchId) {
+                       touchState.camera.active = false;
+                       touchState.camera.touchId = null;
+                       break;
+                   }
+               }
+           };
+           renderer.domElement.addEventListener('touchend', cameraEnd, false);
+           renderer.domElement.addEventListener('touchcancel', cameraEnd, false);
+       }
+
+
+       // --- Game Logic & Animation ---
+
+
+       function handleKeyAction(key, isDown) {
+           if (!isDown) {
+                // Handle key up for toggle actions
+                if (key === 'z') {
+                   isCrouching = false;
+                }
+               return;
+           }
+          
+           // Handle one-shot actions on key down
+           switch (key) {
+               case ' ': // space
+                   playOneShotAction('Jump');
+                   break;
+               case 'c': // Kicks
+               case 'v':
+               case 'b':
+               case 'f': // Punches
+               case 'g':
+               case 'h':
+                   playOneShotAction('Punch');
+                   break;
+               case 'x': // Flips
+                   playOneShotAction('Jump'); // Mapped to Jump
+                   break;
+               case 'z': // Crouch
+                   isCrouching = true;
+                   break;
+           }
+       }
+
+
+       function playOneShotAction(name) {
+           // Don't interrupt another one-shot action
+           if (activeAction === animationsMap.get(name)) return;
+
+
+           const action = animationsMap.get(name);
+           if (!action) {
+               console.warn(`Animation not found: ${name}`);
+               return;
+           }
+          
+           action.reset()
+                 .setLoop(THREE.LoopOnce, 1)
+                 .stop() // Stop any previous playback
+                 .play();
+          
+           // Fade back to the active looping action when done
+           mixer.addEventListener('finished', (e) => {
+               if (e.action === action) {
+                   mixer.removeEventListener('finished', this); // Clean up
+                   fadeToAction(determineMovementAction(), 0.2);
+               }
+           });
+
+
+           // Fade to the one-shot action
+           activeAction.crossFadeTo(action, 0.2, true);
+          
+           // We set activeAction temporarily to the one-shot
+           // but this will be overridden by the finished listener
+       }
+      
+       function fadeToAction(name, duration) {
+           if (!name) return;
+           const nextAction = animationsMap.get(name);
+          
+           if (activeAction === nextAction) return;
+          
+           if (activeAction) {
+               activeAction.fadeOut(duration);
+           }
+
+
+           nextAction
+               .reset()
+               .setEffectiveTimeScale(1)
+               .setEffectiveWeight(1)
+               .fadeIn(duration)
+               .play();
+
+
+           activeAction = nextAction;
+       }
+
+
+       function determineMovementAction() {
+           let moveFwd = 0;
+           let moveRight = 0;
+           let isRunning = false;
+
+
+           if (inputMode === 'keyboard') {
+               isRunning = keysPressed['shift'];
+               if (keysPressed['w']) moveFwd = 1;
+               if (keysPressed['s']) moveFwd = -1;
+               if (keysPressed['a']) moveRight = 1;
+               if (keysPressed['d']) moveRight = -1;
+           } else {
+               moveFwd = -touchState.joystick.y;
+               moveRight = touchState.joystick.x;
+               const magnitude = Math.sqrt(moveFwd*moveFwd + moveRight*moveRight);
+               if (magnitude > 0.8) isRunning = true; // Run if joystick pushed far
+           }
+
+
+           // Store movement direction
+           moveDirection.z = moveFwd;
+           moveDirection.x = moveRight;
+
+
+           // Determine animation
+           if (isCrouching) return 'Sitting';
+
+
+           const isMoving = moveFwd !== 0 || moveRight !== 0;
+           if (isMoving) {
+               return isRunning ? 'Run' : 'Walk';
+           }
+           return 'Idle';
+       }
+      
+       function updateCharacter(delta) {
+           if (!model || !mixer) return;
+
+
+           const newActionName = determineMovementAction();
+          
+           // Don't interrupt one-shot actions with movement
+           if (activeAction && activeAction.loop !== THREE.LoopOnce) {
+               fadeToAction(newActionName, 0.2);
+           }
+          
+           // --- Update Movement ---
+           const moveSpeed = (newActionName === 'Run' ? 4 : (newActionName === 'Walk' ? 2 : 0));
+          
+           if (moveSpeed > 0) {
+               // Get the forward and right vectors relative to the model's rotation
+               const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(model.quaternion);
+               const right = new THREE.Vector3(1, 0, 0).applyQuaternion(model.quaternion);
+
+
+               // Calculate final velocity vector
+               const velocity = new THREE.Vector3();
+               velocity.add(forward.multiplyScalar(moveDirection.z));
+               velocity.add(right.multiplyScalar(moveDirection.x));
+               velocity.normalize().multiplyScalar(moveSpeed * delta);
+              
+               model.position.add(velocity);
+           }
+
+
+           // --- Update Rotation ---
+           if (inputMode === 'keyboard') {
+               // Smoothly lerp rotation for mouse
+               currentRotationY = THREE.MathUtils.lerp(currentRotationY, targetRotationY, 0.1);
+           } else {
+               // Directly set rotation for touch (it's already delta-based)
+               currentRotationY = targetRotationY;
+           }
+           model.rotation.y = currentRotationY;
+          
+           // --- Update Camera ---
+           // Camera follows the model
+           const cameraTarget = new THREE.Vector3().copy(model.position);
+           cameraTarget.y += 1.5; // Look at the torso
+
+
+           const relativeCameraOffset = new THREE.Vector3().copy(cameraOffset);
+           relativeCameraOffset.applyQuaternion(model.quaternion); // Rotate offset with model
+
+
+           camera.position.copy(cameraTarget).add(relativeCameraOffset);
+           camera.lookAt(cameraTarget);
+       }
+      
+       // --- Render Loop ---
+       function animate() {
+           requestAnimationFrame(animate);
+
+
+           const delta = clock.getDelta();
+
+
+           if (mixer) mixer.update(delta);
+          
+           updateCharacter(delta);
+
+
+           renderer.render(scene, camera);
+       }
+
+
+       // --- Window Resize ---
+       function onWindowResize() {
+           camera.aspect = window.innerWidth / window.innerHeight;
+           camera.updateProjectionMatrix();
+           renderer.setSize(window.innerWidth, window.innerHeight);
+
+
+           // Re-calculate joystick rect if in touch mode
+           if (inputMode === 'touch') {
+               // This is a simplified resize handler.
+               // A robust solution would re-cache all joystick values.
+               // For now, a reload on resize might be safest for touch.
+           }
+       }
+
+
+       // --- Start ---
+       init();
+
+
+   </script>
+</body>
+</html>
